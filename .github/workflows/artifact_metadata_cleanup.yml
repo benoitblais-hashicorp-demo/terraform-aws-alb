@@ -1,0 +1,136 @@
+# This workflow runs manually to mark linked-artifact storage records as deleted.
+#
+# Documentation
+# - https://docs.github.com/en/rest/orgs/artifact-metadata?apiVersion=2022-11-28
+
+name: Cleanup artifact metadata
+
+on:  # yamllint disable-line rule:truthy
+  workflow_dispatch:
+    inputs:
+      subject_digest:
+        description: "Required digest (sha256:...) used to list storage records."
+        required: true
+        type: string
+      version:
+        description: "Optional version filter (example: 1.0.4)."
+        required: false
+        type: string
+      artifact_url:
+        description: "Optional exact artifact_url filter."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    name: Mark storage records as deleted
+    runs-on: ubuntu-latest
+    env:
+      API_TOKEN: ${{ secrets.ARTIFACT_METADATA_TOKEN || github.token }}
+      GITHUB_API_VERSION: "2026-03-10"
+    steps:
+
+      - name: Validate API token for organization metadata
+        run: |
+          set -euo pipefail
+
+          if [[ -n "${{ secrets.ARTIFACT_METADATA_TOKEN }}" ]]; then
+            echo "INFO     | Using ARTIFACT_METADATA_TOKEN secret for org metadata API calls."
+          else
+            echo "WARN     | ARTIFACT_METADATA_TOKEN is not set. Falling back to github.token (may be insufficient for org metadata endpoints)."
+          fi
+
+          scope_response=$(curl -sS -i --request GET \
+            --url "https://api.github.com/orgs/${GITHUB_REPOSITORY_OWNER}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer ${API_TOKEN}" \
+            --header "X-GitHub-Api-Version: ${GITHUB_API_VERSION}")
+
+          status=$(echo "${scope_response}" | head -n 1 | awk '{print $2}')
+          if [[ "${status}" != "200" ]]; then
+            echo "ERROR    | API token cannot access organization ${GITHUB_REPOSITORY_OWNER} (HTTP ${status})."
+            exit 1
+          fi
+
+      - name: Mark matching storage records as deleted
+        run: |
+          set -euo pipefail
+
+          subject_digest="${{ inputs.subject_digest }}"
+          version_filter="${{ inputs.version }}"
+          artifact_url_filter="${{ inputs.artifact_url }}"
+
+          if [[ ! "${subject_digest}" =~ ^sha256: ]]; then
+            echo "ERROR    | subject_digest must start with sha256:."
+            exit 1
+          fi
+
+          echo "INFO     | Listing storage records for digest: ${subject_digest}"
+          existing_response=$(curl -sS --request GET \
+            --url "https://api.github.com/orgs/${GITHUB_REPOSITORY_OWNER}/artifacts/${subject_digest}/metadata/storage-records" \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer ${API_TOKEN}" \
+            --header "X-GitHub-Api-Version: ${GITHUB_API_VERSION}")
+
+          repository_name="${GITHUB_REPOSITORY#*/}"
+
+          candidates=$(echo "${existing_response}" | jq -c --arg version_filter "${version_filter}" --arg artifact_url_filter "${artifact_url_filter}" '
+            .storage_records // []
+            | map(
+                select(
+                  ($artifact_url_filter == "" or .artifact_url == $artifact_url_filter)
+                  and
+                  ($version_filter == "" or (.name | test("-" + $version_filter + "\\.tar\\.gz$")) or (.artifact_url | test("/" + $version_filter + "(/|$)")))
+                )
+              )
+          ')
+
+          match_count=$(echo "${candidates}" | jq -r 'length')
+          echo "INFO     | Matching records: ${match_count}"
+
+          if [[ "${match_count}" == "0" ]]; then
+            echo "INFO     | No matching records found. Nothing to update."
+            exit 0
+          fi
+
+          echo "${candidates}" | jq -c '.[]' | while read -r record; do
+            name=$(echo "${record}" | jq -r '.name')
+            artifact_url=$(echo "${record}" | jq -r '.artifact_url // ""')
+            registry_url=$(echo "${record}" | jq -r '.registry_url')
+            repository=$(echo "${record}" | jq -r '.repository // ""')
+
+            json_payload=$(jq -n \
+              --arg name "${name}" \
+              --arg digest "${subject_digest}" \
+              --arg artifact_url "${artifact_url}" \
+              --arg registry_url "${registry_url}" \
+              --arg repository "${repository}" \
+              --arg github_repository "${repository_name}" \
+              '{
+                name: $name,
+                digest: $digest,
+                artifact_url: $artifact_url,
+                registry_url: $registry_url,
+                repository: $repository,
+                status: "deleted",
+                github_repository: $github_repository
+              }')
+
+            response=$(curl -sS --request POST \
+              --url "https://api.github.com/orgs/${GITHUB_REPOSITORY_OWNER}/artifacts/metadata/storage-record" \
+              --header "Accept: application/vnd.github+json" \
+              --header "Authorization: Bearer ${API_TOKEN}" \
+              --header "X-GitHub-Api-Version: ${GITHUB_API_VERSION}" \
+              --data "${json_payload}")
+
+            if ! [[ "${response}" =~ "storage_records" ]]; then
+              echo "ERROR    | Unable to mark record deleted for ${name}."
+              echo "${response}"
+              exit 1
+            fi
+
+            echo "INFO     | Marked deleted: ${name}"
+          done

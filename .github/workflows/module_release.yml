@@ -1,0 +1,286 @@
+# This workflow runs after `Tag version` or on `release` `published`.
+#
+# `Publish module version` runs command-line to make API to publish a new version of the module.
+#
+# Secret requirement for artifact metadata update:
+# - `ARTIFACT_METADATA_TOKEN` (fine-grained PAT)
+#   Required repository permissions:
+#   - Artifact metadata: Write
+#   - Contents: Read (or Write)
+# Documentation
+# - https://developer.hashicorp.com/terraform/cloud-docs/api-docs/private-registry/modules#create-a-module-version
+# - https://docs.github.com/en/rest/orgs/artifact-metadata?apiVersion=2022-11-28
+
+name: Publish module version
+
+on:  # yamllint disable-line rule:truthy
+  release:
+    types: [published]
+  workflow_run:
+    workflows: ["Tag version"]
+    types:
+      - completed
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  tag:
+    name: Publish module version
+    runs-on: ubuntu-latest
+    env:
+      TFC_ORGANIZATION: "benoitblais-hashicorp"
+      TFC_API_TOKEN: ${{ secrets.TFE_TOKEN }}
+    steps:
+
+      - name: Publish module version
+        env:
+          EVENT_CONTEXT: ${{ toJson(github.event) }}
+        run: |
+          echo "INFO     | Build required variables."
+          tfc_api_url="https://app.terraform.io/api/v2"
+          auth_header="Authorization: Bearer ${TFC_API_TOKEN}"
+          content_header="Content-Type: application/vnd.api+json"
+          echo "INFO     | Get release version."
+          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            version=$(echo "${EVENT_CONTEXT}" | jq ".workflow_run.head_branch" | sed 's|\"||g')
+          elif [[ "${{ github.event_name }}" == "release" ]]; then
+            version="${{ github.ref_name }}"
+          else
+            echo "ERROR    | Event name is not \"workflow_run\" or \"release\"."
+            exit 1
+          fi
+          version="${version//v/}"
+          commit_sha="${{ github.sha }}"
+          echo "INFO     | Version: ${version}"
+          echo "INFO     | SHA: ${commit_sha}"
+          echo "INFO     | Build JSON payload."
+          json_string='{"data": {"type": "registry-module-versions","attributes": {"version": "'"${version}"'","commit_sha": "'"${commit_sha}"'"} } }'
+          json_payload=$(echo "${json_string}" | jq)
+          echo "INFO     | Get Terraform module provider and name."
+          repository_name=$(echo "${EVENT_CONTEXT}" | jq ".repository.name" | sed 's|\"||g')
+          echo "INFO     | GitHub repository name: ${repository_name}"
+          repository_name_array=$(echo "${repository_name}" | tr "-" " ")
+          read -r -a array <<< "${repository_name_array}"
+          module_provider="${array[1]}"
+          echo "INFO     | Module provider: ${module_provider}"
+          module_name=$(echo "${repository_name}" | sed -n -e "s/^.*-${module_provider}-//p" )
+          echo "INFO     | Module name: ${module_name}"
+          echo "INFO     | Run API call to publish a new version."
+          {
+            run=$(curl -sS --request POST --url "${tfc_api_url}/organizations/${TFC_ORGANIZATION}/registry-modules/private/${TFC_ORGANIZATION}/${module_name}/${module_provider}/versions" \
+            --header "${auth_header}" --header "${content_header}" --data "${json_payload}")
+            if ! [[ "${run}" =~ "{\"data\":" ]]; then
+              echo "ERROR    | Unable to published new module version."
+              echo "${run}"
+              exit 1
+            fi
+          } ||
+          {
+            echo "ERROR    | Unable to published new module version."
+            exit 1
+          }
+          echo "INFO     | Get module information."
+          {
+            run=$(curl -sS --request GET --url "${tfc_api_url}/organizations/${TFC_ORGANIZATION}/registry-modules/private/${TFC_ORGANIZATION}/${module_name}/${module_provider}" \
+            --header "${auth_header}" --header "${content_header}")
+            if ! [[ "${run}" =~ "{\"data\":" ]]; then
+              echo "ERROR    | Unable to to get module information."
+              echo "${run}"
+              exit 1
+            fi
+          } ||
+          {
+            echo "ERROR    | Unable to to get module information."
+            exit 1
+          }
+          no_code_id=$(echo "${run}" | jq -r '.data.relationships."no-code-modules".data[].id')
+          if [[ "${no_code_id}" != "null" ]]; then
+            echo "INFO     | No-code module ID: ${no_code_id}"
+            module_id=$(echo "${run}" | jq -r '.data.id')
+            echo "INFO     | Module ID: ${module_id}"
+            json_string='{"data":{"type":"no-code-modules","attributes":{"enabled":true,"version-pin":"'"${version}"'"},"relationships":{"registry-module":{"data":{"id":"'"${module_id}"'","type":"registry-module"}}}}}'
+            json_payload=$(echo "${json_string}" | jq)
+            {
+              run=$(curl -sS --request PATCH --url "${tfc_api_url}/no-code-modules/${no_code_id}" \
+              --header "${auth_header}" --header "${content_header}" --data "${json_payload}")
+              if ! [[ "${run}" =~ "{\"data\":" ]]; then
+                echo "ERROR    | Unable to update no-code module."
+                echo "${run}"
+                #exit 1
+              fi
+            } ||
+            {
+              echo "ERROR    | Unable to update no-code module."
+              exit 1
+            }
+          else
+            echo "INFO     | Module is not a no-code module. Nothing to do."
+          fi
+
+  artifact-metadata:
+    name: Update artifact metadata storage record
+    needs: tag
+    if: ${{ needs.tag.result == 'success' && (github.event_name == 'workflow_run' || github.event_name == 'release') }}
+    runs-on: ubuntu-latest
+    env:
+      API_TOKEN: ${{ secrets.ARTIFACT_METADATA_TOKEN || github.token }}
+      GH_TOKEN: ${{ secrets.ARTIFACT_METADATA_TOKEN || github.token }}
+      GITHUB_API_VERSION: "2026-03-10"
+      TFC_ORGANIZATION: "benoitblais-hashicorp"
+    steps:
+
+      - name: Validate API token for organization metadata
+        run: |
+          set -euo pipefail
+
+          if [[ -n "${{ secrets.ARTIFACT_METADATA_TOKEN }}" ]]; then
+            echo "INFO     | Using ARTIFACT_METADATA_TOKEN secret for org metadata API calls."
+          else
+            echo "WARN     | ARTIFACT_METADATA_TOKEN is not set. Falling back to github.token (may be insufficient for org metadata endpoints)."
+          fi
+
+          scope_response=$(curl -sS -i --request GET \
+            --url "https://api.github.com/orgs/${GITHUB_REPOSITORY_OWNER}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer ${API_TOKEN}" \
+            --header "X-GitHub-Api-Version: ${GITHUB_API_VERSION}")
+
+          status=$(echo "${scope_response}" | head -n 1 | awk '{print $2}')
+          if [[ "${status}" != "200" ]]; then
+            echo "ERROR    | API token cannot access organization ${GITHUB_REPOSITORY_OWNER} (HTTP ${status})."
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Build payload values
+        id: values
+        env:
+          EVENT_CONTEXT: ${{ toJson(github.event) }}
+        run: |
+          set -euo pipefail
+
+          repo_name="${GITHUB_REPOSITORY#*/}"
+          echo "INFO     | GitHub repository name: ${repo_name}"
+
+          repository_name_array=$(echo "${repo_name}" | tr "-" " ")
+          read -r -a array <<< "${repository_name_array}"
+          module_provider="${array[1]}"
+          module_name=$(echo "${repo_name}" | sed -n -e "s/^.*-${module_provider}-//p")
+
+          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            release_tag=$(echo "${EVENT_CONTEXT}" | jq -r '.workflow_run.head_branch')
+          elif [[ "${{ github.event_name }}" == "release" ]]; then
+            release_tag="${{ github.ref_name }}"
+          else
+            echo "ERROR    | Unsupported event name ${GITHUB_EVENT_NAME}."
+            exit 1
+          fi
+
+          version="${release_tag#v}"
+          git rev-parse --verify "refs/tags/${release_tag}" > /dev/null
+
+          echo "INFO     | Module provider: ${module_provider}"
+          echo "INFO     | Module name: ${module_name}"
+          echo "INFO     | Release tag: ${release_tag}"
+          echo "INFO     | Module version: ${version}"
+
+          git archive --format=tar.gz --output=module.tar.gz "${release_tag}"
+
+          local_digest="sha256:$(sha256sum module.tar.gz | awk '{print $1}')"
+
+          artifact_name="${module_name}"
+          artifact_subject_name="${repo_name}-${version}"
+          artifact_url="https://app.terraform.io/app/${TFC_ORGANIZATION}/registry/modules/private/${TFC_ORGANIZATION}/${module_name}/${module_provider}/${version}"
+          registry_url="https://app.terraform.io/app/${TFC_ORGANIZATION}/registry/modules/private"
+
+          {
+            echo "module_provider=${module_provider}"
+            echo "module_name=${module_name}"
+            echo "release_tag=${release_tag}"
+            echo "version=${version}"
+            echo "local_digest=${local_digest}"
+            echo "artifact_name=${artifact_name}"
+            echo "artifact_subject_name=${artifact_subject_name}"
+            echo "artifact_url=${artifact_url}"
+            echo "registry_url=${registry_url}"
+            echo "repository_name=${repo_name}"
+          } >> "$GITHUB_OUTPUT"
+
+          mv module.tar.gz "${{ github.workspace }}/${artifact_name}-${version}.tar.gz"
+
+      - name: Create attestation for module artifact
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: ${{ github.workspace }}/${{ steps.values.outputs.artifact_name }}-${{ steps.values.outputs.version }}.tar.gz
+
+      - name: Create artifact metadata storage record
+        run: |
+          set -euo pipefail
+
+          subject_digest="${{ steps.values.outputs.local_digest }}"
+          existing_response=$(curl -sS --request GET \
+            --url "https://api.github.com/orgs/${GITHUB_REPOSITORY_OWNER}/artifacts/${subject_digest}/metadata/storage-records" \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer ${API_TOKEN}" \
+            --header "X-GitHub-Api-Version: ${GITHUB_API_VERSION}")
+
+          existing_count=$(echo "${existing_response}" | jq -r --arg name "${{ steps.values.outputs.artifact_subject_name }}" --arg artifact_url "${{ steps.values.outputs.artifact_url }}" '[.storage_records[]? | select(.name == $name or .artifact_url == $artifact_url)] | length' 2>/dev/null || echo "0")
+
+          if [[ "${existing_count}" -gt 0 ]]; then
+            echo "INFO     | Matching storage record already exists for digest ${subject_digest}."
+            echo "INFO     | Skipping create to avoid duplicate entries."
+            exit 0
+          fi
+
+          json_payload=$(jq -n \
+            --arg name "${{ steps.values.outputs.artifact_subject_name }}" \
+            --arg version "${{ steps.values.outputs.version }}" \
+            --arg digest "${subject_digest}" \
+            --arg artifact_url "${{ steps.values.outputs.artifact_url }}" \
+            --arg registry_url "${{ steps.values.outputs.registry_url }}" \
+            --arg repository "${{ steps.values.outputs.module_name }}" \
+            --arg github_repository "${{ steps.values.outputs.repository_name }}" \
+            '{
+              name: $name,
+              version: $version,
+              digest: $digest,
+              artifact_url: $artifact_url,
+              registry_url: $registry_url,
+              repository: $repository,
+              status: "active",
+              github_repository: $github_repository
+            }')
+
+          response=""
+          for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+            response=$(curl -sS --request POST \
+              --url "https://api.github.com/orgs/${GITHUB_REPOSITORY_OWNER}/artifacts/metadata/storage-record" \
+              --header "Accept: application/vnd.github+json" \
+              --header "Authorization: Bearer ${API_TOKEN}" \
+              --header "X-GitHub-Api-Version: ${GITHUB_API_VERSION}" \
+              --data "${json_payload}")
+
+            if [[ "${response}" =~ "storage_records" ]]; then
+              break
+            fi
+
+            if [[ "${response}" =~ "no artifacts found" ]] && [[ "${attempt}" -lt 12 ]]; then
+              echo "WARN     | Artifact not indexed yet (attempt ${attempt}/12). Retrying in 15 seconds."
+              sleep 15
+              continue
+            fi
+
+            echo "ERROR    | Unable to create artifact metadata storage record."
+            echo "${response}"
+            exit 1
+          done
+
+          echo "INFO     | Artifact metadata storage record updated successfully."
+          echo "${response}" | jq

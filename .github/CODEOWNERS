@@ -1,0 +1,29 @@
+# Each line is a file pattern followed by one or more owners.
+
+# @benoitblais-hashicorp-demo/Terraform-Modules-Owners owns any files in 
+# the /.github/workflows/ directory at the root of the 
+# repository and any of its subdirectories.
+# This prevent any modification of the GitHub Actions.
+/.github/workflows/ @benoitblais-hashicorp-demo/Terraform-Modules-Owners
+
+# @benoitblais-hashicorp-demo/Terraform-Modules-Owners owns any files in 
+# the /.github/linters/ directory at the root of the 
+# repository and any of its subdirectories.
+# This prevent any modification of the linters configuration files used by the actions.
+/.github/linters/ @benoitblais-hashicorp-demo/Terraform-Modules-Owners
+
+# @benoitblais-hashicorp-demo/Terraform-Modules-Owners owns any files in 
+# the /.github/ISSUE_TEMPLATE/ directory at the root of the 
+# repository and any of its subdirectories.
+# This prevent any modification of the templates used to open issue.
+/.github/ISSUE_TEMPLATE/ @benoitblais-hashicorp-demo/Terraform-Modules-Owners
+
+# @benoitblais-hashicorp-demo/Terraform-Modules-Owners owns the following
+# legal files.
+/docs/CODE_OF_CONDUCT.md @benoitblais-hashicorp-demo/Terraform-Modules-Owners
+/docs/SECURITY.md @benoitblais-hashicorp-demo/Terraform-Modules-Owners
+/LICENSE @benoitblais-hashicorp-demo/Terraform-Modules-Owners
+
+# To protect a repository fully against unauthorized changes,
+# we also need to define an owner for the CODEOWNERS file itself.
+/.github/CODEOWNERS @benoitblais-hashicorp-demo/Terraform-Modules-Owners
