@@ -4,7 +4,8 @@ This file provides instructions for AI coding agents working on this Terraform P
 
 ## Project Overview
 
-This project is a Terraform module designed to provision and manage Amazon Web Services (AWS) Application Load Balancers (ALB). It creates and configures load balancers, listeners, target groups, and associated routing rules to distribute incoming application traffic across multiple targets (such as EC2 instances, containers, IP addresses, and Lambda functions), ensuring high availability and secure application delivery.
+This project is a Terraform module designed to provision and manage Amazon Web Services (AWS) Application Load Balancers (ALB).
+It creates and configures load balancers, listeners, target groups, and associated routing rules to distribute incoming application traffic across multiple targets (such as EC2 instances, containers, IP addresses, and Lambda functions), ensuring high availability and secure application delivery.
 
 ## Module and Repository Structure
 
@@ -79,10 +80,8 @@ Refer to CONTRIBUTING.md for general coding guidelines. HashiCorp's Terraform st
 
 ## Provider Configuration
 
-- Always include a default provider configuration.
-- Define all providers in the same file (`providers.tf`).
-- Define the default provider first, then aliased providers.
-- Use `alias` as the first parameter in non-default provider blocks.
+- **Do not** include `provider` blocks in shared modules.
+- Define provider version constraints in `versions.tf` using the `required_providers` block.
 
 ## Security and Secrets
 

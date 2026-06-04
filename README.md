@@ -1,26 +1,123 @@
 <!-- BEGIN_TF_DOCS -->
-# Title
+# AWS Load Balancer Terraform Module
 
-Describe the purpose of the module.
+Terraform module to provision an Amazon Web Services (AWS) Application Load Balancer (ALB) and associated resources like Listeners, Target Groups, and Routing Rules to distribute incoming application traffic.
 
 ## Permissions
 
-Describe the required permissions to use the module.
+To provision the AWS resources managed by this module, the IAM role or user running Terraform needs permissions such as:
 
-## Authentication
+- `ElasticLoadBalancingFullAccess` (or fine-grained privileges to manage Load Balancers, Listeners, Target Groups, and Listener Rules).
+- Additional permissions to describe EC2 resources and subnets (e.g., `ec2:DescribeSubnets`, `ec2:DescribeVpcs`, `ec2:DescribeSecurityGroups`).
+- Permissions to manage ACM certificates, Route53 DNS records, and WAFv2 Web ACL associations if enabling HTTPS endpoints, custom domain routing, or WAF integrations.
 
-Describe the methods for authenticating with the requried providers.
+## Authentications
+
+Authentication to AWS can be configured using one of the following methods, with preference given to OIDC and dynamic provider credentials in CI/CD environments.
+
+### HCP Terraform / Terraform Enterprise Dynamic Credentials (OIDC)
+
+Use dynamic provider credentials via OpenID Connect (OIDC) for secure, short-lived credentials when running in HCP Terraform or Terraform Enterprise.
+
+- **Using environment variables (HCP Terraform Workspace)**
+
+  - `TFC_AWS_PROVIDER_AUTH=true`
+  - `TFC_AWS_RUN_ROLE_ARN=<aws-iam-role-arn>`
+
+### OIDC with GitHub Actions
+
+When using GitHub Actions, configure OIDC via the `aws-actions/configure-aws-credentials` action.
+
+- **Using GitHub Actions**
+
+  ```yaml
+  - name: Configure AWS credentials
+    uses: aws-actions/configure-aws-credentials@v4
+    with:
+      role-to-assume: arn:aws:iam::111122223333:role/github-actions-role
+      aws-region: us-east-1
+  ```
+
+### Static Access Keys
+
+For local development or environments not supporting OIDC, use static IAM programmatic access keys.
+
+- **Inside the provider block**
+
+  ```hcl
+  provider "aws" {
+    region     = "us-east-1"
+    access_key = "<aws-access-key-id>"
+    secret_key = "<aws-secret-access-key>"
+  }
+  ```
+
+- **Using environment variables**
+
+  - `AWS_ACCESS_KEY_ID`
+  - `AWS_SECRET_ACCESS_KEY`
+  - `AWS_DEFAULT_REGION` (optional)
+
+Documentation:
+
+- [AWS Provider Authentication](https://registry.terraform.io/providers/hashicorp/aws/latest/docs#authentication)
+- [Dynamic Provider Credentials in HCP Terraform](https://developer.hashicorp.com/terraform/cloud-docs/workspaces/dynamic-provider-credentials/aws-configuration)
 
 ## Features
 
-Describe the feature supported by the module.
+- Complete foundational AWS application load balancer setup (ALB/NLB/GWLB, connection logging, access logging).
+- Highly configurable Listeners (HTTP, HTTPS, standard/fixed responses, redirects, mutual TLS).
+- Flexible Target Group configurations (EC2 instances, IP, Lambda functions, stickiness, health checks).
+- Fully supported Listener Rules for advanced URL, path, and header-based routing.
+- Integrations for AWS Certificate Manager (ACM), Route53 alias records, and WAFv2 Web ACLs.
 
 ## Usage example
 
 ```hcl
-module "name" {
-  source  = "app.terraform.io/"
-  version = "0.0.0"
+module "alb" {
+  source  = "app.terraform.io/benoitblais-hashicorp/alb/aws"
+  version = "~> 9.0"
+
+  name    = "my-alb"
+  vpc_id  = "vpc-12345678"
+  subnets = ["subnet-12345678", "subnet-87654321"]
+
+  # Security Group
+  security_group_ingress_rules = {
+    all_http = {
+      from_port   = 80
+      to_port     = 80
+      ip_protocol = "tcp"
+      description = "HTTP web traffic"
+      cidr_ipv4   = "0.0.0.0/0"
+    }
+  }
+
+  listeners = {
+    http-forward = {
+      port     = 80
+      protocol = "HTTP"
+
+      forward = {
+        target_group_key = "ex-instance"
+      }
+    }
+  }
+
+  target_groups = {
+    ex-instance = {
+      name_prefix      = "pref-"
+      protocol         = "HTTP"
+      port             = 80
+      target_type      = "instance"
+      create_attachment = false
+    }
+  }
+
+  tags = {
+    Environment = "prod"
+    Terraform   = "true"
+  }
 }
 ```
 
@@ -30,7 +127,9 @@ module "name" {
 
 The following requirements are needed by this module:
 
-- <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) (>= 1.13.0)
+- <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) (~> 1.0)
+
+- <a name="requirement_aws"></a> [aws](#requirement\_aws) (~> 5.62)
 
 ## Modules
 
@@ -42,15 +141,434 @@ No required inputs.
 
 ## Optional Inputs
 
-No optional inputs.
+The following input variables are optional (have default values):
+
+### <a name="input_access_logs"></a> [access\_logs](#input\_access\_logs)
+
+Description: Map containing access logging configuration for load balancer
+
+Type: `map(string)`
+
+Default: `{}`
+
+### <a name="input_additional_target_group_attachments"></a> [additional\_target\_group\_attachments](#input\_additional\_target\_group\_attachments)
+
+Description: Map of additional target group attachments to create. Use `target_group_key` to attach to the target group created in `target_groups`
+
+Type: `any`
+
+Default: `{}`
+
+### <a name="input_associate_web_acl"></a> [associate\_web\_acl](#input\_associate\_web\_acl)
+
+Description: Indicates whether a Web Application Firewall (WAF) ACL should be associated with the load balancer
+
+Type: `bool`
+
+Default: `false`
+
+### <a name="input_client_keep_alive"></a> [client\_keep\_alive](#input\_client\_keep\_alive)
+
+Description: Client keep alive value in seconds. The valid range is 60-604800 seconds. The default is 3600 seconds.
+
+Type: `number`
+
+Default: `null`
+
+### <a name="input_connection_logs"></a> [connection\_logs](#input\_connection\_logs)
+
+Description: Map containing access logging configuration for load balancer
+
+Type: `map(string)`
+
+Default: `{}`
+
+### <a name="input_create"></a> [create](#input\_create)
+
+Description: Controls if resources should be created (affects nearly all resources)
+
+Type: `bool`
+
+Default: `true`
+
+### <a name="input_create_security_group"></a> [create\_security\_group](#input\_create\_security\_group)
+
+Description: Determines if a security group is created
+
+Type: `bool`
+
+Default: `true`
+
+### <a name="input_customer_owned_ipv4_pool"></a> [customer\_owned\_ipv4\_pool](#input\_customer\_owned\_ipv4\_pool)
+
+Description: The ID of the customer owned ipv4 pool to use for this load balancer
+
+Type: `string`
+
+Default: `null`
+
+### <a name="input_default_port"></a> [default\_port](#input\_default\_port)
+
+Description: Default port used across the listener and target group
+
+Type: `number`
+
+Default: `80`
+
+### <a name="input_default_protocol"></a> [default\_protocol](#input\_default\_protocol)
+
+Description: Default protocol used across the listener and target group
+
+Type: `string`
+
+Default: `"HTTP"`
+
+### <a name="input_desync_mitigation_mode"></a> [desync\_mitigation\_mode](#input\_desync\_mitigation\_mode)
+
+Description: Determines how the load balancer handles requests that might pose a security risk to an application due to HTTP desync. Valid values are `monitor`, `defensive` (default), `strictest`
+
+Type: `string`
+
+Default: `null`
+
+### <a name="input_dns_record_client_routing_policy"></a> [dns\_record\_client\_routing\_policy](#input\_dns\_record\_client\_routing\_policy)
+
+Description: Indicates how traffic is distributed among the load balancer Availability Zones. Possible values are any\_availability\_zone (default), availability\_zone\_affinity, or partial\_availability\_zone\_affinity. Only valid for network type load balancers.
+
+Type: `string`
+
+Default: `null`
+
+### <a name="input_drop_invalid_header_fields"></a> [drop\_invalid\_header\_fields](#input\_drop\_invalid\_header\_fields)
+
+Description: Indicates whether HTTP headers with header fields that are not valid are removed by the load balancer (`true`) or routed to targets (`false`). The default is `true`. Elastic Load Balancing requires that message header names contain only alphanumeric characters and hyphens. Only valid for Load Balancers of type `application`
+
+Type: `bool`
+
+Default: `true`
+
+### <a name="input_enable_cross_zone_load_balancing"></a> [enable\_cross\_zone\_load\_balancing](#input\_enable\_cross\_zone\_load\_balancing)
+
+Description: If `true`, cross-zone load balancing of the load balancer will be enabled. For application load balancer this feature is always enabled (`true`) and cannot be disabled. Defaults to `true`
+
+Type: `bool`
+
+Default: `true`
+
+### <a name="input_enable_deletion_protection"></a> [enable\_deletion\_protection](#input\_enable\_deletion\_protection)
+
+Description: If `true`, deletion of the load balancer will be disabled via the AWS API. This will prevent Terraform from deleting the load balancer. Defaults to `true`
+
+Type: `bool`
+
+Default: `true`
+
+### <a name="input_enable_http2"></a> [enable\_http2](#input\_enable\_http2)
+
+Description: Indicates whether HTTP/2 is enabled in application load balancers. Defaults to `true`
+
+Type: `bool`
+
+Default: `null`
+
+### <a name="input_enable_tls_version_and_cipher_suite_headers"></a> [enable\_tls\_version\_and\_cipher\_suite\_headers](#input\_enable\_tls\_version\_and\_cipher\_suite\_headers)
+
+Description: Indicates whether the two headers (`x-amzn-tls-version` and `x-amzn-tls-cipher-suite`), which contain information about the negotiated TLS version and cipher suite, are added to the client request before sending it to the target. Only valid for Load Balancers of type `application`. Defaults to `false`
+
+Type: `bool`
+
+Default: `null`
+
+### <a name="input_enable_waf_fail_open"></a> [enable\_waf\_fail\_open](#input\_enable\_waf\_fail\_open)
+
+Description: Indicates whether to allow a WAF-enabled load balancer to route requests to targets if it is unable to forward the request to AWS WAF. Defaults to `false`
+
+Type: `bool`
+
+Default: `null`
+
+### <a name="input_enable_xff_client_port"></a> [enable\_xff\_client\_port](#input\_enable\_xff\_client\_port)
+
+Description: Indicates whether the X-Forwarded-For header should preserve the source port that the client used to connect to the load balancer in `application` load balancers. Defaults to `false`
+
+Type: `bool`
+
+Default: `null`
+
+### <a name="input_enforce_security_group_inbound_rules_on_private_link_traffic"></a> [enforce\_security\_group\_inbound\_rules\_on\_private\_link\_traffic](#input\_enforce\_security\_group\_inbound\_rules\_on\_private\_link\_traffic)
+
+Description: Indicates whether inbound security group rules are enforced for traffic originating from a PrivateLink. Only valid for Load Balancers of type network. The possible values are on and off.
+
+Type: `string`
+
+Default: `null`
+
+### <a name="input_idle_timeout"></a> [idle\_timeout](#input\_idle\_timeout)
+
+Description: The time in seconds that the connection is allowed to be idle. Only valid for Load Balancers of type `application`. Default: `60`
+
+Type: `number`
+
+Default: `null`
+
+### <a name="input_internal"></a> [internal](#input\_internal)
+
+Description: If true, the LB will be internal. Defaults to `false`
+
+Type: `bool`
+
+Default: `null`
+
+### <a name="input_ip_address_type"></a> [ip\_address\_type](#input\_ip\_address\_type)
+
+Description: The type of IP addresses used by the subnets for your load balancer. The possible values are `ipv4` and `dualstack`
+
+Type: `string`
+
+Default: `null`
+
+### <a name="input_listeners"></a> [listeners](#input\_listeners)
+
+Description: Map of listener configurations to create
+
+Type: `any`
+
+Default: `{}`
+
+### <a name="input_load_balancer_type"></a> [load\_balancer\_type](#input\_load\_balancer\_type)
+
+Description: The type of load balancer to create. Possible values are `application`, `gateway`, or `network`. The default value is `application`
+
+Type: `string`
+
+Default: `"application"`
+
+### <a name="input_name"></a> [name](#input\_name)
+
+Description: The name of the LB. This name must be unique within your AWS account, can have a maximum of 32 characters, must contain only alphanumeric characters or hyphens, and must not begin or end with a hyphen
+
+Type: `string`
+
+Default: `null`
+
+### <a name="input_name_prefix"></a> [name\_prefix](#input\_name\_prefix)
+
+Description: Creates a unique name beginning with the specified prefix. Conflicts with `name`
+
+Type: `string`
+
+Default: `null`
+
+### <a name="input_preserve_host_header"></a> [preserve\_host\_header](#input\_preserve\_host\_header)
+
+Description: Indicates whether the Application Load Balancer should preserve the Host header in the HTTP request and send it to the target without any change. Defaults to `false`
+
+Type: `bool`
+
+Default: `null`
+
+### <a name="input_putin_khuylo"></a> [putin\_khuylo](#input\_putin\_khuylo)
+
+Description: Do you agree that Putin doesn't respect Ukrainian sovereignty and territorial integrity? More info: https://en.wikipedia.org/wiki/Putin_khuylo!
+
+Type: `bool`
+
+Default: `true`
+
+### <a name="input_route53_records"></a> [route53\_records](#input\_route53\_records)
+
+Description: Map of Route53 records to create. Each record map should contain `zone_id`, `name`, and `type`
+
+Type: `any`
+
+Default: `{}`
+
+### <a name="input_security_group_description"></a> [security\_group\_description](#input\_security\_group\_description)
+
+Description: Description of the security group created
+
+Type: `string`
+
+Default: `null`
+
+### <a name="input_security_group_egress_rules"></a> [security\_group\_egress\_rules](#input\_security\_group\_egress\_rules)
+
+Description: Security group egress rules to add to the security group created
+
+Type: `any`
+
+Default: `{}`
+
+### <a name="input_security_group_ingress_rules"></a> [security\_group\_ingress\_rules](#input\_security\_group\_ingress\_rules)
+
+Description: Security group ingress rules to add to the security group created
+
+Type: `any`
+
+Default: `{}`
+
+### <a name="input_security_group_name"></a> [security\_group\_name](#input\_security\_group\_name)
+
+Description: Name to use on security group created
+
+Type: `string`
+
+Default: `null`
+
+### <a name="input_security_group_tags"></a> [security\_group\_tags](#input\_security\_group\_tags)
+
+Description: A map of additional tags to add to the security group created
+
+Type: `map(string)`
+
+Default: `{}`
+
+### <a name="input_security_group_use_name_prefix"></a> [security\_group\_use\_name\_prefix](#input\_security\_group\_use\_name\_prefix)
+
+Description: Determines whether the security group name (`security_group_name`) is used as a prefix
+
+Type: `bool`
+
+Default: `true`
+
+### <a name="input_security_groups"></a> [security\_groups](#input\_security\_groups)
+
+Description: A list of security group IDs to assign to the LB
+
+Type: `list(string)`
+
+Default: `[]`
+
+### <a name="input_subnet_mapping"></a> [subnet\_mapping](#input\_subnet\_mapping)
+
+Description: A list of subnet mapping blocks describing subnets to attach to load balancer
+
+Type: `list(map(string))`
+
+Default: `[]`
+
+### <a name="input_subnets"></a> [subnets](#input\_subnets)
+
+Description: A list of subnet IDs to attach to the LB. Subnets cannot be updated for Load Balancers of type `network`. Changing this value for load balancers of type `network` will force a recreation of the resource
+
+Type: `list(string)`
+
+Default: `null`
+
+### <a name="input_tags"></a> [tags](#input\_tags)
+
+Description: A map of tags to add to all resources
+
+Type: `map(string)`
+
+Default: `{}`
+
+### <a name="input_target_groups"></a> [target\_groups](#input\_target\_groups)
+
+Description: Map of target group configurations to create
+
+Type: `any`
+
+Default: `{}`
+
+### <a name="input_timeouts"></a> [timeouts](#input\_timeouts)
+
+Description: Create, update, and delete timeout configurations for the load balancer
+
+Type: `map(string)`
+
+Default: `{}`
+
+### <a name="input_vpc_id"></a> [vpc\_id](#input\_vpc\_id)
+
+Description: Identifier of the VPC where the security group will be created
+
+Type: `string`
+
+Default: `null`
+
+### <a name="input_web_acl_arn"></a> [web\_acl\_arn](#input\_web\_acl\_arn)
+
+Description: Web Application Firewall (WAF) ARN of the resource to associate with the load balancer
+
+Type: `string`
+
+Default: `null`
+
+### <a name="input_xff_header_processing_mode"></a> [xff\_header\_processing\_mode](#input\_xff\_header\_processing\_mode)
+
+Description: Determines how the load balancer modifies the X-Forwarded-For header in the HTTP request before sending the request to the target. The possible values are `append`, `preserve`, and `remove`. Only valid for Load Balancers of type `application`. The default is `append`
+
+Type: `string`
+
+Default: `null`
 
 ## Resources
 
-No resources.
+The following resources are used by this module:
+
+- [aws_lambda_permission.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_permission) (resource)
+- [aws_lb.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lb) (resource)
+- [aws_lb_listener.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lb_listener) (resource)
+- [aws_lb_listener_certificate.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lb_listener_certificate) (resource)
+- [aws_lb_listener_rule.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lb_listener_rule) (resource)
+- [aws_lb_target_group.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lb_target_group) (resource)
+- [aws_lb_target_group_attachment.additional](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lb_target_group_attachment) (resource)
+- [aws_lb_target_group_attachment.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lb_target_group_attachment) (resource)
+- [aws_route53_record.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/route53_record) (resource)
+- [aws_security_group.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/security_group) (resource)
+- [aws_vpc_security_group_egress_rule.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/vpc_security_group_egress_rule) (resource)
+- [aws_vpc_security_group_ingress_rule.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/vpc_security_group_ingress_rule) (resource)
+- [aws_wafv2_web_acl_association.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/wafv2_web_acl_association) (resource)
+- [aws_partition.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/partition) (data source)
 
 ## Outputs
 
-No outputs.
+The following outputs are exported:
+
+### <a name="output_arn"></a> [arn](#output\_arn)
+
+Description: The ID and ARN of the load balancer we created
+
+### <a name="output_arn_suffix"></a> [arn\_suffix](#output\_arn\_suffix)
+
+Description: ARN suffix of our load balancer - can be used with CloudWatch
+
+### <a name="output_dns_name"></a> [dns\_name](#output\_dns\_name)
+
+Description: The DNS name of the load balancer
+
+### <a name="output_id"></a> [id](#output\_id)
+
+Description: The ID and ARN of the load balancer we created
+
+### <a name="output_listener_rules"></a> [listener\_rules](#output\_listener\_rules)
+
+Description: Map of listeners rules created and their attributes
+
+### <a name="output_listeners"></a> [listeners](#output\_listeners)
+
+Description: Map of listeners created and their attributes
+
+### <a name="output_route53_records"></a> [route53\_records](#output\_route53\_records)
+
+Description: The Route53 records created and attached to the load balancer
+
+### <a name="output_security_group_arn"></a> [security\_group\_arn](#output\_security\_group\_arn)
+
+Description: Amazon Resource Name (ARN) of the security group
+
+### <a name="output_security_group_id"></a> [security\_group\_id](#output\_security\_group\_id)
+
+Description: ID of the security group
+
+### <a name="output_target_groups"></a> [target\_groups](#output\_target\_groups)
+
+Description: Map of target groups created and their attributes
+
+### <a name="output_zone_id"></a> [zone\_id](#output\_zone\_id)
+
+Description: The zone\_id of the load balancer to assist with creating DNS records
 
 <!-- markdownlint-enable -->
 <!-- END_TF_DOCS -->

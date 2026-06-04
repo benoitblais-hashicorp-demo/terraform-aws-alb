@@ -1,10 +1,14 @@
 # AWS Load Balancer Terraform Module
 
-
+Terraform module to provision an Amazon Web Services (AWS) Application Load Balancer (ALB) and associated resources like Listeners, Target Groups, and Routing Rules to distribute incoming application traffic.
 
 ## Permissions
 
+To provision the AWS resources managed by this module, the IAM role or user running Terraform needs permissions such as:
 
+- `ElasticLoadBalancingFullAccess` (or fine-grained privileges to manage Load Balancers, Listeners, Target Groups, and Listener Rules).
+- Additional permissions to describe EC2 resources and subnets (e.g., `ec2:DescribeSubnets`, `ec2:DescribeVpcs`, `ec2:DescribeSecurityGroups`).
+- Permissions to manage ACM certificates, Route53 DNS records, and WAFv2 Web ACL associations if enabling HTTPS endpoints, custom domain routing, or WAF integrations.
 
 ## Authentications
 
@@ -60,8 +64,58 @@ Documentation:
 
 ## Features
 
-
+- Complete foundational AWS application load balancer setup (ALB/NLB/GWLB, connection logging, access logging).
+- Highly configurable Listeners (HTTP, HTTPS, standard/fixed responses, redirects, mutual TLS).
+- Flexible Target Group configurations (EC2 instances, IP, Lambda functions, stickiness, health checks).
+- Fully supported Listener Rules for advanced URL, path, and header-based routing.
+- Integrations for AWS Certificate Manager (ACM), Route53 alias records, and WAFv2 Web ACLs.
 
 ## Usage example
 
+```hcl
+module "alb" {
+  source  = "app.terraform.io/benoitblais-hashicorp/alb/aws"
+  version = "~> 9.0"
 
+  name    = "my-alb"
+  vpc_id  = "vpc-12345678"
+  subnets = ["subnet-12345678", "subnet-87654321"]
+
+  # Security Group
+  security_group_ingress_rules = {
+    all_http = {
+      from_port   = 80
+      to_port     = 80
+      ip_protocol = "tcp"
+      description = "HTTP web traffic"
+      cidr_ipv4   = "0.0.0.0/0"
+    }
+  }
+
+  listeners = {
+    http-forward = {
+      port     = 80
+      protocol = "HTTP"
+
+      forward = {
+        target_group_key = "ex-instance"
+      }
+    }
+  }
+
+  target_groups = {
+    ex-instance = {
+      name_prefix      = "pref-"
+      protocol         = "HTTP"
+      port             = 80
+      target_type      = "instance"
+      create_attachment = false
+    }
+  }
+
+  tags = {
+    Environment = "prod"
+    Terraform   = "true"
+  }
+}
+```
