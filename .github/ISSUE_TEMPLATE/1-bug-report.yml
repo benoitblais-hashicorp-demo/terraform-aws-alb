@@ -25,27 +25,28 @@ body:
     id: logs
     attributes:
       label: Relevant log output
-      description: Copy and paste any relevant log output.
+      description: Copy and paste any relevant log output (e.g., HCP Terraform run logs, Kubernetes events).
+      render: shell
     validations:
       required: false
   - type: input
-    id: version
+    id: terraform-version
     attributes:
-      label: Version
-      description: With which version of the Terraform module is the problem is?
+      label: Terraform Version
+      description: Which version of Terraform (or HCP Terraform) are you using?
+    validations:
+      required: true
+  - type: input
+    id: component
+    attributes:
+      label: Component / Module
+      description: Which Stack component or child module is experiencing the issue?
     validations:
       required: true
   - type: markdown
     attributes:
       value: |
-        *If you are not using the latest available version of the Terraform module, please validate if the problem exists with this version.*
-  - type: input
-    id: runner
-    attributes:
-      label: Runner
-      description: With which runner image is the problem is?
-    validations:
-      required: true
+        *If you are not deploying from the `main` branch, please validate if the problem exists on the latest commit.*
   - type: checkboxes
     id: terms
     attributes:

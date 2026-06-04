@@ -1,6 +1,6 @@
 # Security Policy
 
-We seriously takes  the security of all of the code repositories managed through our GitHub.
+We take the security of all of the code repositories managed through our GitHub seriously.
 
 ## Reporting a Vulnerability
 

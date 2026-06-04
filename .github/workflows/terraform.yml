@@ -12,11 +12,11 @@
 name: Terraform
 
 on:  # yamllint disable-line rule:truthy
-  pull_request:
-    branches:
-      - '*'                      # matches every branch that doesn't contain a '/'
-      - '*/*'                    # matches every branch containing a single '/'
-      - '**'                     # matches every branch
+  pull_request: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
@@ -40,7 +40,7 @@ jobs:
           ref: ${{ steps.branch.outputs.branch }}
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v4
+        uses: hashicorp/setup-terraform@v3
         with:
           terraform_wrapper: false
 

@@ -27,7 +27,7 @@ permissions:
   attestations: write
 
 jobs:
-  tag:
+  publish:
     name: Publish module version
     runs-on: ubuntu-latest
     env:
@@ -122,8 +122,8 @@ jobs:
 
   artifact-metadata:
     name: Update artifact metadata storage record
-    needs: tag
-    if: ${{ needs.tag.result == 'success' && (github.event_name == 'workflow_run' || github.event_name == 'release') }}
+    needs: publish
+    if: ${{ needs.publish.result == 'success' && (github.event_name == 'workflow_run' || github.event_name == 'release') }}
     runs-on: ubuntu-latest
     env:
       API_TOKEN: ${{ secrets.ARTIFACT_METADATA_TOKEN || github.token }}
@@ -154,7 +154,7 @@ jobs:
             exit 1
           fi
 
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v6
         with:
           fetch-depth: 0

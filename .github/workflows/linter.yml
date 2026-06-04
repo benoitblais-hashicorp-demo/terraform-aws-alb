@@ -10,11 +10,11 @@
 name: Lint Code Base
 
 on:  # yamllint disable-line rule:truthy
-  pull_request:
-    branches:
-      - '*'                      # matches every branch that doesn't contain a '/'
-      - '*/*'                    # matches every branch containing a single '/'
-      - '**'                     # matches every branch
+  pull_request: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -46,5 +46,5 @@ jobs:
           VALIDATE_MARKDOWN: true
           VALIDATE_TERRAFORM_TFLINT: true
           VALIDATE_YAML: true
-          # Exclude README.md file because it is generated
-          FILTER_REGEX_EXCLUDE: README.md
+          # Exclude SKILL.md and README.md files from markdown linting
+          FILTER_REGEX_EXCLUDE: .*(SKILL|README)\.md$
