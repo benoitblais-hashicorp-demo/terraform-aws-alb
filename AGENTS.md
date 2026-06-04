@@ -79,10 +79,8 @@ Refer to CONTRIBUTING.md for general coding guidelines. HashiCorp's Terraform st
 
 ## Provider Configuration
 
-- Always include a default provider configuration.
-- Define all providers in the same file (`providers.tf`).
-- Define the default provider first, then aliased providers.
-- Use `alias` as the first parameter in non-default provider blocks.
+- **Do not** include `provider` blocks in shared modules.
+- Define provider version constraints in `versions.tf` using the `required_providers` block.
 
 ## Security and Secrets
 
