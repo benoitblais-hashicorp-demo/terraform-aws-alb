@@ -1,28 +1,63 @@
 <!-- BEGIN_TF_DOCS -->
-# Title
-
-Describe the purpose of the module.
+# AWS Load Balancer Terraform Module
 
 ## Permissions
 
-Describe the required permissions to use the module.
+## Authentications
 
-## Authentication
+Authentication to AWS can be configured using one of the following methods, with preference given to OIDC and dynamic provider credentials in CI/CD environments.
 
-Describe the methods for authenticating with the requried providers.
+### HCP Terraform / Terraform Enterprise Dynamic Credentials (OIDC)
+
+Use dynamic provider credentials via OpenID Connect (OIDC) for secure, short-lived credentials when running in HCP Terraform or Terraform Enterprise.
+
+- **Using environment variables (HCP Terraform Workspace)**
+
+  - `TFC_AWS_PROVIDER_AUTH=true`
+  - `TFC_AWS_RUN_ROLE_ARN=<aws-iam-role-arn>`
+
+### OIDC with GitHub Actions
+
+When using GitHub Actions, configure OIDC via the `aws-actions/configure-aws-credentials` action.
+
+- **Using GitHub Actions**
+
+  ```yaml
+  - name: Configure AWS credentials
+    uses: aws-actions/configure-aws-credentials@v4
+    with:
+      role-to-assume: arn:aws:iam::111122223333:role/github-actions-role
+      aws-region: us-east-1
+  ```
+
+### Static Access Keys
+
+For local development or environments not supporting OIDC, use static IAM programmatic access keys.
+
+- **Inside the provider block**
+
+  ```hcl
+  provider "aws" {
+    region     = "us-east-1"
+    access_key = "<aws-access-key-id>"
+    secret_key = "<aws-secret-access-key>"
+  }
+  ```
+
+- **Using environment variables**
+
+  - `AWS_ACCESS_KEY_ID`
+  - `AWS_SECRET_ACCESS_KEY`
+  - `AWS_DEFAULT_REGION` (optional)
+
+Documentation:
+
+- [AWS Provider Authentication](https://registry.terraform.io/providers/hashicorp/aws/latest/docs#authentication)
+- [Dynamic Provider Credentials in HCP Terraform](https://developer.hashicorp.com/terraform/cloud-docs/workspaces/dynamic-provider-credentials/aws-configuration)
 
 ## Features
 
-Describe the feature supported by the module.
-
 ## Usage example
-
-```hcl
-module "name" {
-  source  = "app.terraform.io/"
-  version = "0.0.0"
-}
-```
 
 ## Documentation
 
