@@ -4,7 +4,7 @@ This file provides instructions for AI coding agents working on this Terraform P
 
 ## Project Overview
 
-This project is a Terraform module designed to provision and manage Amazon Web Services (AWS) Application Load Balancers (ALB). 
+This project is a Terraform module designed to provision and manage Amazon Web Services (AWS) Application Load Balancers (ALB).
 It creates and configures load balancers, listeners, target groups, and associated routing rules to distribute incoming application traffic across multiple targets (such as EC2 instances, containers, IP addresses, and Lambda functions), ensuring high availability and secure application delivery.
 
 ## Module and Repository Structure
