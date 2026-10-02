@@ -72,16 +72,19 @@ Documentation:
 
 ## Usage example
 
+### Example 1: HTTPS ALB with Automated ACM Certificate & Route53 Validation
+
 ```hcl
 module "alb" {
   source  = "app.terraform.io/benoitblais-hashicorp/alb/aws"
-  version = "~> 9.0"
+  version = "~> 0.0"
 
-  name    = "my-alb"
-  vpc_id  = "vpc-12345678"
-  subnets = ["subnet-12345678", "subnet-87654321"]
+  name               = "web-static"
+  vpc_id             = "vpc-12345678"
+  subnets            = ["subnet-12345678", "subnet-87654321"]
+  public_hosted_zone = "example.com"
+  create_certificate = true
 
-  # Security Group
   security_group_ingress_rules = {
     all_http = {
       from_port   = 80
@@ -90,25 +93,41 @@ module "alb" {
       description = "HTTP web traffic"
       cidr_ipv4   = "0.0.0.0/0"
     }
+    all_https = {
+      from_port   = 443
+      to_port     = 443
+      ip_protocol = "tcp"
+      description = "HTTPS web traffic"
+      cidr_ipv4   = "0.0.0.0/0"
+    }
   }
 
   listeners = {
-    http-forward = {
+    http-80 = {
       port     = 80
       protocol = "HTTP"
-
+      redirect = {
+        port        = "443"
+        protocol    = "HTTPS"
+        status_code = "HTTP_301"
+      }
+    }
+    https-443 = {
+      port     = 443
+      protocol = "HTTPS"
+      # certificate_arn automatically defaults to the generated certificate
       forward = {
-        target_group_key = "ex-instance"
+        target_group_key = "web-static-tg"
       }
     }
   }
 
   target_groups = {
-    ex-instance = {
-      name_prefix      = "pref-"
-      protocol         = "HTTP"
-      port             = 80
-      target_type      = "instance"
+    web-static-tg = {
+      name_prefix       = "webstc"
+      protocol          = "HTTP"
+      port              = 8080
+      target_type       = "instance"
       create_attachment = false
     }
   }
@@ -116,6 +135,40 @@ module "alb" {
   tags = {
     Environment = "prod"
     Terraform   = "true"
+  }
+}
+```
+
+### Example 2: HTTPS ALB with an Existing Certificate ARN
+
+```hcl
+module "alb" {
+  source  = "app.terraform.io/benoitblais-hashicorp/alb/aws"
+  version = "~> 0.0"
+
+  name            = "web-static"
+  vpc_id          = "vpc-12345678"
+  subnets         = ["subnet-12345678", "subnet-87654321"]
+  certificate_arn = "arn:aws:acm:ca-central-1:123456789012:certificate/12345678-1234-1234-1234-123456789012"
+
+  listeners = {
+    https-443 = {
+      port     = 443
+      protocol = "HTTPS"
+      forward = {
+        target_group_key = "web-static-tg"
+      }
+    }
+  }
+
+  target_groups = {
+    web-static-tg = {
+      name_prefix       = "webstc"
+      protocol          = "HTTP"
+      port              = 8080
+      target_type       = "instance"
+      create_attachment = false
+    }
   }
 }
 ```
