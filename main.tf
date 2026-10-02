@@ -1,8 +1,60 @@
 data "aws_partition" "current" {}
 
 locals {
-  create = var.create && var.putin_khuylo
-  tags   = merge(var.tags, { terraform-aws-modules = "alb" })
+  create             = var.create && var.putin_khuylo
+  tags               = merge(var.tags, { terraform-aws-modules = "alb" })
+  create_certificate = local.create && var.create_certificate && var.certificate_arn == null && var.public_hosted_zone != null && var.public_hosted_zone != ""
+  certificate_domain = try(coalesce(var.certificate_domain_name, "${var.name}.${var.public_hosted_zone}"), null)
+  certificate_arn    = var.certificate_arn != null ? var.certificate_arn : try(aws_acm_certificate_validation.this[0].certificate_arn, null)
+}
+
+################################################################################
+# Route53 Zone & ACM Certificate (Optional)
+################################################################################
+
+data "aws_route53_zone" "this" {
+  count = local.create_certificate ? 1 : 0
+
+  name         = var.public_hosted_zone
+  private_zone = false
+}
+
+resource "aws_acm_certificate" "this" {
+  count = local.create_certificate ? 1 : 0
+
+  domain_name               = local.certificate_domain
+  subject_alternative_names = var.certificate_subject_alternative_names
+  validation_method         = "DNS"
+
+  tags = local.tags
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+resource "aws_route53_record" "validation" {
+  for_each = local.create_certificate ? {
+    for dvo in aws_acm_certificate.this[0].domain_validation_options : dvo.domain_name => {
+      name   = dvo.resource_record_name
+      record = dvo.resource_record_value
+      type   = dvo.resource_record_type
+    }
+  } : {}
+
+  allow_overwrite = true
+  name            = each.value.name
+  records         = [each.value.record]
+  ttl             = 60
+  type            = each.value.type
+  zone_id         = data.aws_route53_zone.this[0].zone_id
+}
+
+resource "aws_acm_certificate_validation" "this" {
+  count = local.create_certificate ? 1 : 0
+
+  certificate_arn         = aws_acm_certificate.this[0].arn
+  validation_record_fqdns = [for record in aws_route53_record.validation : record.fqdn]
 }
 
 ################################################################################
@@ -88,7 +140,7 @@ resource "aws_lb_listener" "this" {
   for_each = { for k, v in var.listeners : k => v if local.create }
 
   alpn_policy     = try(each.value.alpn_policy, null)
-  certificate_arn = try(each.value.certificate_arn, null)
+  certificate_arn = try(each.value.certificate_arn, local.certificate_arn)
 
   dynamic "default_action" {
     for_each = try([each.value.authenticate_cognito], [])

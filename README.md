@@ -73,16 +73,19 @@ Documentation:
 
 ## Usage example
 
+### Example 1: HTTPS ALB with Automated ACM Certificate & Route53 Validation
+
 ```hcl
 module "alb" {
   source  = "app.terraform.io/benoitblais-hashicorp/alb/aws"
-  version = "~> 9.0"
+  version = "~> 0.0"
 
-  name    = "my-alb"
-  vpc_id  = "vpc-12345678"
-  subnets = ["subnet-12345678", "subnet-87654321"]
+  name               = "web-static"
+  vpc_id             = "vpc-12345678"
+  subnets            = ["subnet-12345678", "subnet-87654321"]
+  public_hosted_zone = "example.com"
+  create_certificate = true
 
-  # Security Group
   security_group_ingress_rules = {
     all_http = {
       from_port   = 80
@@ -91,25 +94,41 @@ module "alb" {
       description = "HTTP web traffic"
       cidr_ipv4   = "0.0.0.0/0"
     }
+    all_https = {
+      from_port   = 443
+      to_port     = 443
+      ip_protocol = "tcp"
+      description = "HTTPS web traffic"
+      cidr_ipv4   = "0.0.0.0/0"
+    }
   }
 
   listeners = {
-    http-forward = {
+    http-80 = {
       port     = 80
       protocol = "HTTP"
-
+      redirect = {
+        port        = "443"
+        protocol    = "HTTPS"
+        status_code = "HTTP_301"
+      }
+    }
+    https-443 = {
+      port     = 443
+      protocol = "HTTPS"
+      # certificate_arn automatically defaults to the generated certificate
       forward = {
-        target_group_key = "ex-instance"
+        target_group_key = "web-static-tg"
       }
     }
   }
 
   target_groups = {
-    ex-instance = {
-      name_prefix      = "pref-"
-      protocol         = "HTTP"
-      port             = 80
-      target_type      = "instance"
+    web-static-tg = {
+      name_prefix       = "webstc"
+      protocol          = "HTTP"
+      port              = 8080
+      target_type       = "instance"
       create_attachment = false
     }
   }
@@ -117,6 +136,40 @@ module "alb" {
   tags = {
     Environment = "prod"
     Terraform   = "true"
+  }
+}
+```
+
+### Example 2: HTTPS ALB with an Existing Certificate ARN
+
+```hcl
+module "alb" {
+  source  = "app.terraform.io/benoitblais-hashicorp/alb/aws"
+  version = "~> 0.0"
+
+  name            = "web-static"
+  vpc_id          = "vpc-12345678"
+  subnets         = ["subnet-12345678", "subnet-87654321"]
+  certificate_arn = "arn:aws:acm:ca-central-1:123456789012:certificate/12345678-1234-1234-1234-123456789012"
+
+  listeners = {
+    https-443 = {
+      port     = 443
+      protocol = "HTTPS"
+      forward = {
+        target_group_key = "web-static-tg"
+      }
+    }
+  }
+
+  target_groups = {
+    web-static-tg = {
+      name_prefix       = "webstc"
+      protocol          = "HTTP"
+      port              = 8080
+      target_type       = "instance"
+      create_attachment = false
+    }
   }
 }
 ```
@@ -167,6 +220,30 @@ Type: `bool`
 
 Default: `false`
 
+### <a name="input_certificate_arn"></a> [certificate\_arn](#input\_certificate\_arn)
+
+Description: The ARN of an existing SSL/TLS certificate to use for HTTPS listeners. If not provided and `create_certificate` is true, an ACM certificate will be requested and validated using Route53.
+
+Type: `string`
+
+Default: `null`
+
+### <a name="input_certificate_domain_name"></a> [certificate\_domain\_name](#input\_certificate\_domain\_name)
+
+Description: The domain name for which the ACM certificate should be issued. Defaults to `<name>.<public_hosted_zone>` if null and `public_hosted_zone` is provided.
+
+Type: `string`
+
+Default: `null`
+
+### <a name="input_certificate_subject_alternative_names"></a> [certificate\_subject\_alternative\_names](#input\_certificate\_subject\_alternative\_names)
+
+Description: A list of additional domain names (SANs) to include in the ACM certificate.
+
+Type: `list(string)`
+
+Default: `[]`
+
 ### <a name="input_client_keep_alive"></a> [client\_keep\_alive](#input\_client\_keep\_alive)
 
 Description: Client keep alive value in seconds. The valid range is 60-604800 seconds. The default is 3600 seconds.
@@ -190,6 +267,14 @@ Description: Controls if resources should be created (affects nearly all resourc
 Type: `bool`
 
 Default: `true`
+
+### <a name="input_create_certificate"></a> [create\_certificate](#input\_create\_certificate)
+
+Description: Controls whether to create and validate an ACM certificate using Route53 when `certificate_arn` is not provided.
+
+Type: `bool`
+
+Default: `false`
 
 ### <a name="input_create_security_group"></a> [create\_security\_group](#input\_create\_security\_group)
 
@@ -367,6 +452,14 @@ Type: `bool`
 
 Default: `null`
 
+### <a name="input_public_hosted_zone"></a> [public\_hosted\_zone](#input\_public\_hosted\_zone)
+
+Description: The Route 53 public hosted zone name (e.g., 'example.com') where DNS validation records will be published. Required if `create_certificate` is true and `certificate_arn` is not provided.
+
+Type: `string`
+
+Default: `null`
+
 ### <a name="input_putin_khuylo"></a> [putin\_khuylo](#input\_putin\_khuylo)
 
 Description: Do you agree that Putin doesn't respect Ukrainian sovereignty and territorial integrity? More info: https://en.wikipedia.org/wiki/Putin_khuylo!
@@ -507,6 +600,8 @@ Default: `null`
 
 The following resources are used by this module:
 
+- [aws_acm_certificate.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/acm_certificate) (resource)
+- [aws_acm_certificate_validation.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/acm_certificate_validation) (resource)
 - [aws_lambda_permission.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_permission) (resource)
 - [aws_lb.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lb) (resource)
 - [aws_lb_listener.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lb_listener) (resource)
@@ -516,15 +611,25 @@ The following resources are used by this module:
 - [aws_lb_target_group_attachment.additional](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lb_target_group_attachment) (resource)
 - [aws_lb_target_group_attachment.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lb_target_group_attachment) (resource)
 - [aws_route53_record.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/route53_record) (resource)
+- [aws_route53_record.validation](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/route53_record) (resource)
 - [aws_security_group.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/security_group) (resource)
 - [aws_vpc_security_group_egress_rule.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/vpc_security_group_egress_rule) (resource)
 - [aws_vpc_security_group_ingress_rule.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/vpc_security_group_ingress_rule) (resource)
 - [aws_wafv2_web_acl_association.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/wafv2_web_acl_association) (resource)
 - [aws_partition.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/partition) (data source)
+- [aws_route53_zone.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/route53_zone) (data source)
 
 ## Outputs
 
 The following outputs are exported:
+
+### <a name="output_acm_certificate_id"></a> [acm\_certificate\_id](#output\_acm\_certificate\_id)
+
+Description: The ID of the ACM certificate generated by the module
+
+### <a name="output_acm_certificate_status"></a> [acm\_certificate\_status](#output\_acm\_certificate\_status)
+
+Description: The status of the ACM certificate generated by the module
 
 ### <a name="output_arn"></a> [arn](#output\_arn)
 
@@ -533,6 +638,10 @@ Description: The ID and ARN of the load balancer we created
 ### <a name="output_arn_suffix"></a> [arn\_suffix](#output\_arn\_suffix)
 
 Description: ARN suffix of our load balancer - can be used with CloudWatch
+
+### <a name="output_certificate_arn"></a> [certificate\_arn](#output\_certificate\_arn)
+
+Description: The ARN of the certificate used by the load balancer (either provided or generated via ACM)
 
 ### <a name="output_dns_name"></a> [dns\_name](#output\_dns\_name)
 

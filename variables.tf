@@ -186,6 +186,45 @@ variable "default_protocol" {
   default     = "HTTP"
 }
 
+################################################################################
+# Certificate (ACM & Route53 Validation)
+################################################################################
+
+variable "certificate_arn" {
+  description = "The ARN of an existing SSL/TLS certificate to use for HTTPS listeners. If not provided and `create_certificate` is true, an ACM certificate will be requested and validated using Route53."
+  type        = string
+  default     = null
+}
+
+variable "create_certificate" {
+  description = "Controls whether to create and validate an ACM certificate using Route53 when `certificate_arn` is not provided."
+  type        = bool
+  default     = false
+}
+
+variable "public_hosted_zone" {
+  description = "The Route 53 public hosted zone name (e.g., 'example.com') where DNS validation records will be published. Required if `create_certificate` is true and `certificate_arn` is not provided."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.certificate_arn != null || !var.create_certificate || (var.create_certificate && var.public_hosted_zone != null && var.public_hosted_zone != "")
+    error_message = "A valid `public_hosted_zone` must be provided when `create_certificate` is true and `certificate_arn` is not specified."
+  }
+}
+
+variable "certificate_domain_name" {
+  description = "The domain name for which the ACM certificate should be issued. Defaults to `<name>.<public_hosted_zone>` if null and `public_hosted_zone` is provided."
+  type        = string
+  default     = null
+}
+
+variable "certificate_subject_alternative_names" {
+  description = "A list of additional domain names (SANs) to include in the ACM certificate."
+  type        = list(string)
+  default     = []
+}
+
 variable "listeners" {
   description = "Map of listener configurations to create"
   type        = any
