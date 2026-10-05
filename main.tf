@@ -140,7 +140,7 @@ resource "aws_lb_listener" "this" {
   for_each = { for k, v in var.listeners : k => v if local.create }
 
   alpn_policy     = try(each.value.alpn_policy, null)
-  certificate_arn = try(each.value.certificate_arn, local.certificate_arn)
+  certificate_arn = try(each.value.certificate_arn, try(upper(each.value.protocol), var.default_protocol) == "HTTPS" ? local.certificate_arn : null)
 
   dynamic "default_action" {
     for_each = try([each.value.authenticate_cognito], [])
